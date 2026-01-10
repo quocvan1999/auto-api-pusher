@@ -1,0 +1,48 @@
+import { GoogleGenAI } from "@google/genai";
+import { ApiConfig } from "../types";
+
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+export const parseCurlWithGemini = async (curlString: string): Promise<ApiConfig> => {
+  try {
+    const model = "gemini-3-flash-preview";
+    
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: `
+        You are a developer tool. Your task is to parse a cURL command string and extract the HTTP method, URL, headers, and the JSON body structure.
+        
+        The cURL command is:
+        ${curlString}
+
+        Output valid JSON only with this structure:
+        {
+          "method": "GET" | "POST" | ...,
+          "url": "https://...",
+          "headers": { "Key": "Value" },
+          "bodyTemplate": { "key": "value" }
+        }
+
+        Rules:
+        1. Extract 'method' (GET, POST, PUT, DELETE, etc.). Default to GET if not found.
+        2. Extract 'url'.
+        3. Extract 'headers' as a key-value object.
+        4. Extract 'bodyTemplate' as a JSON object. If the cURL has a raw body, parse it. If it uses -d key=value, convert to JSON. If no body, return empty object.
+      `,
+      config: {
+        responseMimeType: "application/json",
+        // Note: responseSchema is omitted here because 'additionalProperties' (needed for dynamic headers/body)
+        // is not fully supported in the strict schema definition of the API yet.
+      }
+    });
+
+    if (response.text) {
+      return JSON.parse(response.text) as ApiConfig;
+    }
+    throw new Error("Empty response from AI");
+  } catch (error: any) {
+    console.error("Error parsing cURL:", error);
+    // Propagate the actual error message to help debugging (e.g. API Key issues, Quota, or Bad Request)
+    throw new Error(error.message || "Failed to parse cURL command.");
+  }
+};

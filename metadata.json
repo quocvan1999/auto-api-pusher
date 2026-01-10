@@ -1,0 +1,5 @@
+{
+  "name": "AutoAPI Pusher",
+  "description": "An intelligent bulk data uploader. Paste a cURL command to configure the endpoint, paste your spreadsheet data, map the fields, and blast data to your backend instantly.",
+  "requestFramePermissions": []
+}
