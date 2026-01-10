@@ -1,10 +1,16 @@
 import { GoogleGenAI } from "@google/genai";
 import { ApiConfig } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Remove global initialization to allow dynamic key injection
+// const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-export const parseCurlWithGemini = async (curlString: string): Promise<ApiConfig> => {
+export const parseCurlWithGemini = async (curlString: string, apiKey: string): Promise<ApiConfig> => {
+  if (!apiKey) {
+      throw new Error("API Key is missing. Please configure it in settings.");
+  }
+
   try {
+    const ai = new GoogleGenAI({ apiKey: apiKey });
     const model = "gemini-3-flash-preview";
     
     const response = await ai.models.generateContent({
