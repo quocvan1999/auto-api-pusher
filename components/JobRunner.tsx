@@ -15,7 +15,7 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [stats, setStats] = useState({ success: 0, error: 0, pending: data.length });
-  const [delay, setDelay] = useState(1000); // Default 1s delay
+  const [delay, setDelay] = useState(5000); // Default 5s delay
   const [autoScroll, setAutoScroll] = useState(true); // Control auto-scrolling
   
   // Edit State

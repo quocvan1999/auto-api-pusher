@@ -1,8 +1,23 @@
 import { GoogleGenAI } from "@google/genai";
 import { ApiConfig } from "../types";
 
-// Remove global initialization to allow dynamic key injection
-// const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Helper to remove keys starting with _ recursively
+const cleanInternalKeys = (obj: any): any => {
+  if (Array.isArray(obj)) {
+    return obj.map(cleanInternalKeys);
+  }
+  if (obj !== null && typeof obj === 'object') {
+    const newObj: any = {};
+    for (const key in obj) {
+      // Remove keys starting with _ (e.g., _comment, __internal)
+      if (!key.startsWith('_')) {
+        newObj[key] = cleanInternalKeys(obj[key]);
+      }
+    }
+    return newObj;
+  }
+  return obj;
+};
 
 export const parseCurlWithGemini = async (curlString: string, apiKey: string): Promise<ApiConfig> => {
   if (!apiKey) {
@@ -34,6 +49,7 @@ export const parseCurlWithGemini = async (curlString: string, apiKey: string): P
         2. Extract 'url'.
         3. Extract 'headers' as a key-value object.
         4. Extract 'bodyTemplate' as a JSON object. If the cURL has a raw body, parse it. If it uses -d key=value, convert to JSON. If no body, return empty object.
+        5. IMPORTANT: Ignore and exclude any headers or body keys that start with "_" (underscore). These are internal variables or comments.
       `,
       config: {
         responseMimeType: "application/json",
@@ -43,7 +59,13 @@ export const parseCurlWithGemini = async (curlString: string, apiKey: string): P
     });
 
     if (response.text) {
-      return JSON.parse(response.text) as ApiConfig;
+      const parsed = JSON.parse(response.text) as ApiConfig;
+      
+      // Post-process to strictly ensure no underscore keys exist
+      parsed.headers = cleanInternalKeys(parsed.headers || {});
+      parsed.bodyTemplate = cleanInternalKeys(parsed.bodyTemplate || {});
+      
+      return parsed;
     }
     throw new Error("Empty response from AI");
   } catch (error: any) {

@@ -1,21 +1,25 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { ApiConfig, CsvRow, Mapping } from '../types';
-import { parseCSV, flattenObjectKeys } from '../utils/dataUtils';
-import { Table, Database, ArrowRight, ArrowLeft, Settings2, Trash2, FileSpreadsheet, Eye, Plus, AlertCircle, Maximize2, X, Minimize2 } from 'lucide-react';
+import { flattenObjectKeys } from '../utils/dataUtils';
+import { Table, Database, ArrowRight, ArrowLeft, Settings2, Trash2, FileSpreadsheet, Plus, AlertCircle, Maximize2, X, Minimize2 } from 'lucide-react';
 import { read, utils } from 'xlsx';
 
 interface Props {
   apiConfig: ApiConfig;
+  initialData?: CsvRow[];
+  initialMappings?: Mapping[];
   onBack: () => void;
   onNext: (data: CsvRow[], mappings: Mapping[]) => void;
 }
 
-const DataMapper: React.FC<Props> = ({ apiConfig, onBack, onNext }) => {
-  const [rawData, setRawData] = useState('');
-  const [parsedRows, setParsedRows] = useState<CsvRow[]>([]);
-  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
-  const [mappings, setMappings] = useState<Mapping[]>([]);
-  const [showPreview, setShowPreview] = useState(false);
+const DataMapper: React.FC<Props> = ({ apiConfig, initialData, initialMappings, onBack, onNext }) => {
+  // Initialize with passed data if available (preserving state on navigation)
+  const [parsedRows, setParsedRows] = useState<CsvRow[]>(initialData || []);
+  const [csvHeaders, setCsvHeaders] = useState<string[]>(
+    initialData && initialData.length > 0 ? Object.keys(initialData[0]) : []
+  );
+  const [mappings, setMappings] = useState<Mapping[]>(initialMappings || []);
+
   const [isExpanded, setIsExpanded] = useState(false); // State for fullscreen modal
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -33,6 +37,13 @@ const DataMapper: React.FC<Props> = ({ apiConfig, onBack, onNext }) => {
     
     const newMappings: Mapping[] = [];
     bodyKeys.forEach(key => {
+      // If a mapping already exists for this key, keep it
+      const existing = mappings.find(m => m.jsonPath === key);
+      if (existing) {
+          newMappings.push(existing);
+          return;
+      }
+
       const lastPart = key.split('.').pop()?.toLowerCase();
       const match = headers.find(h => 
         h.toLowerCase() === key.toLowerCase() || 
@@ -43,18 +54,6 @@ const DataMapper: React.FC<Props> = ({ apiConfig, onBack, onNext }) => {
       }
     });
     setMappings(newMappings);
-  };
-
-  // Handle manual text changes (Paste)
-  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const text = e.target.value;
-    setRawData(text);
-    
-    // Parse immediately
-    const { headers, data } = parseCSV(text);
-    setParsedRows(data);
-    setCsvHeaders(headers);
-    autoMapHeaders(headers);
   };
 
   // Handle Excel/CSV file upload
@@ -80,11 +79,6 @@ const DataMapper: React.FC<Props> = ({ apiConfig, onBack, onNext }) => {
           setParsedRows(jsonData);
           setCsvHeaders(headers);
           autoMapHeaders(headers);
-          
-          const csvView = utils.sheet_to_csv(worksheet);
-          setRawData(csvView);
-          
-          setShowPreview(true);
       } else {
           alert("File appears to be empty.");
       }
@@ -124,7 +118,6 @@ const DataMapper: React.FC<Props> = ({ apiConfig, onBack, onNext }) => {
     currentHeaders.forEach(h => newRow[h] = '');
     
     setParsedRows(prev => [...prev, newRow]);
-    setShowPreview(true); 
     
     // Auto scroll to bottom - handle both normal and modal view
     setTimeout(() => {
@@ -155,7 +148,7 @@ const DataMapper: React.FC<Props> = ({ apiConfig, onBack, onNext }) => {
                    <div className="flex flex-col items-center justify-center h-full text-slate-400 p-8 text-center">
                        <Database size={32} className="mb-2 opacity-50" />
                        <p className="text-sm">No data found.</p>
-                       <p className="text-xs mt-1">Paste data, import a file, or add a row manually.</p>
+                       <p className="text-xs mt-1">Import a file or add a row manually to get started.</p>
                    </div>
                ) : (
                    <table className="min-w-full text-left border-collapse text-xs">
@@ -241,7 +234,7 @@ const DataMapper: React.FC<Props> = ({ apiConfig, onBack, onNext }) => {
                 <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Database size={18} className="text-indigo-600" />
-                      <h3 className="font-semibold text-slate-800">Raw Data</h3>
+                      <h3 className="font-semibold text-slate-800">Data Source</h3>
                     </div>
                     <div className="flex items-center gap-2">
                       <button
@@ -269,38 +262,7 @@ const DataMapper: React.FC<Props> = ({ apiConfig, onBack, onNext }) => {
                 </div>
                 
                 <div className="flex-1 flex flex-col relative overflow-hidden">
-                   {/* Tabs / Toggle */}
-                   <div className="flex border-b border-slate-100 bg-white shrink-0">
-                      <button 
-                        onClick={() => setShowPreview(false)}
-                        className={`flex-1 py-2 text-xs font-medium text-center ${!showPreview ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:bg-slate-50'}`}
-                      >
-                        Paste Input
-                      </button>
-                      <button 
-                        onClick={() => setShowPreview(true)}
-                        className={`flex-1 py-2 text-xs font-medium text-center flex items-center justify-center gap-2 ${showPreview ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:bg-slate-50'}`}
-                      >
-                        <Eye size={12}/> Preview & Edit ({parsedRows.length})
-                      </button>
-                   </div>
-
-                   {!showPreview ? (
-                       <div className="flex-1 flex flex-col p-4">
-                            <textarea
-                                value={rawData}
-                                onChange={handleTextChange}
-                                placeholder="Paste your Spreadsheet data here, or click 'Import Excel' for better accuracy..."
-                                className="w-full flex-1 font-mono text-xs bg-white text-slate-900 border border-slate-300 p-4 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none resize-none placeholder:text-slate-400"
-                                spellCheck={false}
-                            />
-                            <div className="mt-2 text-xs text-slate-500 flex justify-between">
-                                <span>Detected from text: {parsedRows.length} rows</span>
-                            </div>
-                       </div>
-                   ) : (
-                       renderDataTable(tableContainerRef)
-                   )}
+                   {renderDataTable(tableContainerRef)}
                 </div>
             </div>
         </div>
@@ -418,14 +380,24 @@ const DataMapper: React.FC<Props> = ({ apiConfig, onBack, onNext }) => {
                          </button>
                          <button 
                             onClick={() => setIsExpanded(false)}
-                            className="p-2 hover:bg-red-100 hover:text-red-600 rounded-lg text-slate-400 transition-colors"
+                            className="p-2 hover:bg-red-100 rounded-lg text-slate-500 hover:text-red-600 transition-colors"
                          >
                              <X size={20} />
                          </button>
                       </div>
                   </div>
-                  <div className="flex-1 overflow-hidden p-0 relative">
-                     {renderDataTable(modalTableContainerRef)}
+                  
+                  <div className="flex-1 overflow-hidden p-0">
+                        {renderDataTable(modalTableContainerRef)}
+                  </div>
+                  
+                  <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end">
+                      <button 
+                        onClick={() => setIsExpanded(false)}
+                        className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700"
+                      >
+                        Done
+                      </button>
                   </div>
               </div>
           </div>

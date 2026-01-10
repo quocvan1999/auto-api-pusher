@@ -11,6 +11,7 @@ function App() {
   const [step, setStep] = useState<AppStep>(AppStep.CONFIGURE);
   
   // State for the wizard
+  const [curlCommand, setCurlCommand] = useState<string>('');
   const [apiConfig, setApiConfig] = useState<ApiConfig | null>(null);
   const [bulkData, setBulkData] = useState<CsvRow[]>([]);
   const [mappings, setMappings] = useState<Mapping[]>([]);
@@ -35,8 +36,9 @@ function App() {
     }
   };
 
-  const handleConfigParsed = (config: ApiConfig) => {
+  const handleConfigParsed = (config: ApiConfig, rawCurl: string) => {
     setApiConfig(config);
+    setCurlCommand(rawCurl);
     setStep(AppStep.DATA_ENTRY);
   };
 
@@ -44,6 +46,14 @@ function App() {
     setBulkData(data);
     setMappings(maps);
     setStep(AppStep.EXECUTE);
+  };
+
+  const canNavigateTo = (targetStep: AppStep) => {
+      if (!apiKey) return false;
+      if (targetStep === AppStep.CONFIGURE) return true;
+      if (targetStep === AppStep.DATA_ENTRY) return !!apiConfig;
+      if (targetStep === AppStep.EXECUTE) return !!apiConfig && bulkData.length > 0;
+      return false;
   };
 
   return (
@@ -63,11 +73,29 @@ function App() {
           </div>
           <div className="flex items-center gap-4 text-sm">
              <div className="hidden md:flex items-center gap-2">
-                 <StepIndicator current={step} step={1} label="Config" />
+                 <StepIndicator 
+                    current={step} 
+                    step={1} 
+                    label="Config" 
+                    onClick={() => canNavigateTo(AppStep.CONFIGURE) && setStep(AppStep.CONFIGURE)}
+                    enabled={canNavigateTo(AppStep.CONFIGURE)}
+                 />
                  <div className="w-8 h-px bg-slate-300"></div>
-                 <StepIndicator current={step} step={2} label="Map Data" />
+                 <StepIndicator 
+                    current={step} 
+                    step={2} 
+                    label="Map Data" 
+                    onClick={() => canNavigateTo(AppStep.DATA_ENTRY) && setStep(AppStep.DATA_ENTRY)}
+                    enabled={canNavigateTo(AppStep.DATA_ENTRY)}
+                 />
                  <div className="w-8 h-px bg-slate-300"></div>
-                 <StepIndicator current={step} step={3} label="Execute" />
+                 <StepIndicator 
+                    current={step} 
+                    step={3} 
+                    label="Execute" 
+                    onClick={() => canNavigateTo(AppStep.EXECUTE) && setStep(AppStep.EXECUTE)}
+                    enabled={canNavigateTo(AppStep.EXECUTE)}
+                 />
              </div>
 
              {apiKey && (
@@ -88,12 +116,18 @@ function App() {
       <main className="flex-1 bg-slate-50 p-6 md:p-12 overflow-x-hidden relative">
         <div className={`${!apiKey ? 'blur-sm pointer-events-none select-none' : ''} transition-all duration-500`}>
             {step === AppStep.CONFIGURE && (
-            <CurlImporter apiKey={apiKey} onConfigParsed={handleConfigParsed} />
+            <CurlImporter 
+                apiKey={apiKey} 
+                initialCurl={curlCommand}
+                onConfigParsed={handleConfigParsed} 
+            />
             )}
             
             {step === AppStep.DATA_ENTRY && apiConfig && (
             <DataMapper 
                 apiConfig={apiConfig} 
+                initialData={bulkData}
+                initialMappings={mappings}
                 onBack={() => setStep(AppStep.CONFIGURE)}
                 onNext={handleDataReady}
             />
@@ -117,15 +151,30 @@ function App() {
   );
 }
 
-const StepIndicator: React.FC<{current: number, step: number, label: string}> = ({ current, step, label }) => {
+const StepIndicator: React.FC<{
+    current: number, 
+    step: number, 
+    label: string, 
+    onClick?: () => void,
+    enabled?: boolean
+}> = ({ current, step, label, onClick, enabled }) => {
     const isActive = current === step;
     const isCompleted = current > step;
+    const isClickable = enabled && !isActive;
     
     return (
-        <div className={`flex items-center gap-2 ${isActive ? 'text-indigo-600 font-bold' : isCompleted ? 'text-green-600' : 'text-slate-400'}`}>
-            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs border ${
+        <div 
+            onClick={isClickable ? onClick : undefined}
+            className={`flex items-center gap-2 transition-colors ${
+                isActive ? 'text-indigo-600 font-bold' : 
+                isCompleted ? 'text-green-600' : 
+                enabled ? 'text-slate-600' : 'text-slate-300'
+            } ${isClickable ? 'cursor-pointer hover:text-indigo-600' : 'cursor-default'}`}
+        >
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs border transition-colors ${
                 isActive ? 'border-indigo-600 bg-indigo-50' : 
-                isCompleted ? 'border-green-600 bg-green-50' : 'border-slate-300 bg-white'
+                isCompleted ? 'border-green-600 bg-green-50' : 
+                enabled ? 'border-slate-400 bg-white hover:border-indigo-400' : 'border-slate-200 bg-slate-50'
             }`}>
                 {isCompleted ? '✓' : step}
             </div>
