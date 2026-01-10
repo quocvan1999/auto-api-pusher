@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ApiConfig, CsvRow, Mapping, JobLog } from '../types';
 import { setDeep } from '../utils/dataUtils';
-import { Play, Square, RefreshCcw, CheckCircle2, XCircle, Clock, AlertTriangle, Timer } from 'lucide-react';
+import { Play, Square, RefreshCcw, CheckCircle2, XCircle, Clock, AlertTriangle, Timer, ArrowDownCircle, Edit2, RotateCw, Save, X } from 'lucide-react';
 
 interface Props {
   apiConfig: ApiConfig;
@@ -15,10 +15,15 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [stats, setStats] = useState({ success: 0, error: 0, pending: data.length });
-  const [delay, setDelay] = useState(5000); // Default 5s delay
+  const [delay, setDelay] = useState(1000); // Default 1s delay
+  const [autoScroll, setAutoScroll] = useState(true); // Control auto-scrolling
+  
+  // Edit State
+  const [editingRow, setEditingRow] = useState<{ index: number, data: CsvRow } | null>(null);
   
   const abortControllerRef = useRef<AbortController | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const logsContainerRef = useRef<HTMLDivElement>(null);
 
   // Initialize logs
   useEffect(() => {
@@ -31,12 +36,29 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
     setLogs(initialLogs);
   }, [data]);
 
+  // Sync Stats with Logs
+  useEffect(() => {
+    const newStats = logs.reduce((acc, log) => {
+        if (log.status === 'success') acc.success++;
+        else if (log.status === 'error') acc.error++;
+        else acc.pending++;
+        return acc;
+    }, { success: 0, error: 0, pending: 0 });
+    setStats(newStats);
+    
+    // Update progress
+    const completed = newStats.success + newStats.error;
+    const total = logs.length;
+    setProgress(total > 0 ? (completed / total) * 100 : 0);
+
+  }, [logs]);
+
   // Auto-scroll logs
   useEffect(() => {
-    if (isRunning) {
-        logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isRunning && autoScroll) {
+        logsEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
-  }, [logs, isRunning]);
+  }, [logs, isRunning, autoScroll]);
 
   const constructBody = (row: CsvRow) => {
     const body = {};
@@ -47,79 +69,121 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
     return body;
   };
 
+  const sendRequest = async (rowData: CsvRow, signal?: AbortSignal) => {
+    const body = constructBody(rowData);
+    try {
+        const response = await fetch(apiConfig.url, {
+            method: apiConfig.method,
+            headers: {
+                ...apiConfig.headers,
+                ...(!Object.keys(apiConfig.headers).find(k => k.toLowerCase() === 'content-type') 
+                    ? { 'Content-Type': 'application/json' } 
+                    : {})
+            },
+            body: JSON.stringify(body),
+            signal: signal
+        });
+        const text = await response.text();
+        return { 
+            ok: response.ok, 
+            status: response.status, 
+            response: text.substring(0, 200) + (text.length > 200 ? '...' : '')
+        };
+    } catch (err: any) {
+        if (err.name === 'AbortError') throw err;
+        return { ok: false, status: 0, response: err.message };
+    }
+  };
+
+  const retryRow = async (index: number) => {
+     if (isRunning) return;
+
+     // Optimistic update
+     setLogs(prev => {
+         const n = [...prev];
+         n[index] = { ...n[index], status: 'pending', response: 'Retrying...' };
+         return n;
+     });
+
+     const row = logs[index].data;
+     try {
+         const result = await sendRequest(row as CsvRow);
+         setLogs(prev => {
+             const n = [...prev];
+             n[index] = {
+                 ...n[index],
+                 status: result.ok ? 'success' : 'error',
+                 statusCode: result.status,
+                 response: result.response,
+                 timestamp: new Date()
+             };
+             return n;
+         });
+     } catch (e) { /* ignore */ }
+  };
+
+  const handleEditSave = (newData: CsvRow, shouldRetry: boolean) => {
+      if (!editingRow) return;
+      
+      const idx = editingRow.index;
+      setLogs(prev => {
+          const n = [...prev];
+          n[idx] = { ...n[idx], data: newData, status: 'error' }; // Reset to error visually so it can be retried, or keep status
+          return n;
+      });
+      setEditingRow(null);
+
+      if (shouldRetry) {
+          // Add a small timeout to allow state to settle
+          setTimeout(() => retryRow(idx), 100);
+      }
+  };
+
   const executeJob = useCallback(async () => {
     if (isRunning) return;
     setIsRunning(true);
     abortControllerRef.current = new AbortController();
 
-    // We iterate through original indices to update correct log entries
+    // We iterate through original indices
     for (let i = 0; i < logs.length; i++) {
-        const log = logs[i];
-        if (log.status === 'success') continue; // Skip already successful
+        // Access current log state from logs array which is a dependency
+        // Note: In a real-time loop, 'logs' from closure might be stale if we relied on it for status checks of *other* rows.
+        // But for the current row 'i', we check status.
+        // We must be careful: if the user edits row X while the loop is at row Y, the logs array in this closure is OLD.
+        // Ideally, we should block edits while running.
+        
+        // We need to fetch the LATEST status. 
+        // We can't easily get the latest state inside the loop without refs or functional updates.
+        // Simple fix: Stop the loop if user stops. Block edits while running.
+        
+        // Check "latest" status from a Ref or just trust the closure since edits are blocked.
+        const currentLog = logs[i]; 
+        
+        if (currentLog.status === 'success') continue; 
 
         if (abortControllerRef.current?.signal.aborted) {
             setIsRunning(false);
             return;
         }
 
-        try {
-            const body = constructBody(log.data as CsvRow);
-            
-            const response = await fetch(apiConfig.url, {
-                method: apiConfig.method,
-                headers: {
-                    ...apiConfig.headers,
-                    // Ensure content type is set if not present
-                    ...(!Object.keys(apiConfig.headers).find(k => k.toLowerCase() === 'content-type') 
-                        ? { 'Content-Type': 'application/json' } 
-                        : {})
-                },
-                body: JSON.stringify(body),
-                signal: abortControllerRef.current.signal
-            });
+        const result = await sendRequest(currentLog.data as CsvRow, abortControllerRef.current.signal);
 
-            const resText = await response.text();
-            
-            setLogs(prev => {
-                const newLogs = [...prev];
-                newLogs[i] = {
-                    ...newLogs[i],
-                    status: response.ok ? 'success' : 'error',
-                    statusCode: response.status,
-                    response: resText.substring(0, 200) + (resText.length > 200 ? '...' : ''),
-                    timestamp: new Date()
-                };
-                return newLogs;
-            });
-
-            setStats(prev => ({
-                success: prev.success + (response.ok ? 1 : 0),
-                error: prev.error + (response.ok ? 0 : 1),
-                pending: prev.pending - 1
-            }));
-
-        } catch (err: any) {
-            if (err.name === 'AbortError') break;
-            
-            setLogs(prev => {
-                const newLogs = [...prev];
-                newLogs[i] = {
-                    ...newLogs[i],
-                    status: 'error',
-                    statusCode: 0,
-                    response: err.message,
-                    timestamp: new Date()
-                };
-                return newLogs;
-            });
-            setStats(prev => ({ ...prev, error: prev.error + 1, pending: prev.pending - 1 }));
+        if (result.ok === false && result.status === 0 && result.response.includes('aborted')) {
+             break;
         }
-
-        // Update progress bar
-        setProgress(((i + 1) / logs.length) * 100);
         
-        // Wait for configured delay (min 50ms for UI responsiveness)
-        // If it's the last item, we don't strictly need to wait, but good for consistency
+        setLogs(prev => {
+            const newLogs = [...prev];
+            newLogs[i] = {
+                ...newLogs[i],
+                status: result.ok ? 'success' : 'error',
+                statusCode: result.status,
+                response: result.response,
+                timestamp: new Date()
+            };
+            return newLogs;
+        });
+
         const waitTime = Math.max(50, delay);
         await new Promise(r => setTimeout(r, waitTime)); 
     }
@@ -135,7 +199,7 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
   };
 
   return (
-    <div className="w-full max-w-6xl mx-auto space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
+    <div className="w-full max-w-6xl mx-auto space-y-6 animate-in fade-in slide-in-from-right-4 duration-500 relative">
         {/* Header Stats */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
              <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
@@ -197,8 +261,6 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
                     {progress === 100 && (
                         <button 
                            onClick={() => {
-                               setStats({ success: 0, error: 0, pending: data.length });
-                               setProgress(0);
                                const resetLogs = logs.map(l => ({ ...l, status: 'pending', response: undefined, statusCode: undefined })) as JobLog[];
                                setLogs(resetLogs);
                            }}
@@ -229,22 +291,57 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
 
         {/* Logs Table */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[500px]">
-            <div className="p-4 border-b border-slate-100 bg-slate-50 font-semibold text-slate-700">
-                Execution Log
+            <div className="p-4 border-b border-slate-100 bg-slate-50 font-semibold text-slate-700 flex justify-between items-center">
+                <span>Execution Log</span>
+                <label className="flex items-center gap-2 text-xs font-normal text-slate-600 cursor-pointer select-none bg-white border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors">
+                    <input
+                        type="checkbox"
+                        checked={autoScroll}
+                        onChange={(e) => setAutoScroll(e.target.checked)}
+                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+                    />
+                    <ArrowDownCircle size={14} className={autoScroll ? "text-indigo-600" : "text-slate-400"} />
+                    Auto-scroll
+                </label>
             </div>
-            <div className="flex-1 overflow-auto p-0">
+            <div className="flex-1 overflow-auto p-0 scroll-smooth" ref={logsContainerRef}>
                 <table className="w-full text-left border-collapse">
-                    <thead className="bg-slate-50 sticky top-0 z-10 text-xs uppercase text-slate-500 font-semibold">
+                    <thead className="bg-slate-50 sticky top-0 z-10 text-xs uppercase text-slate-500 font-semibold shadow-sm">
                         <tr>
-                            <th className="p-3 border-b border-slate-200">Status</th>
-                            <th className="p-3 border-b border-slate-200">Row ID</th>
-                            <th className="p-3 border-b border-slate-200">Payload (Preview)</th>
-                            <th className="p-3 border-b border-slate-200">Response</th>
+                            <th className="p-3 border-b border-slate-200 bg-slate-50 w-24">Actions</th>
+                            <th className="p-3 border-b border-slate-200 bg-slate-50">Status</th>
+                            <th className="p-3 border-b border-slate-200 bg-slate-50">Row ID</th>
+                            <th className="p-3 border-b border-slate-200 bg-slate-50">Payload (Preview)</th>
+                            <th className="p-3 border-b border-slate-200 bg-slate-50">Response</th>
                         </tr>
                     </thead>
                     <tbody className="text-sm">
                         {logs.map((log) => (
-                            <tr key={log.id} className="border-b border-slate-100 hover:bg-slate-50">
+                            <tr key={log.id} className="border-b border-slate-100 hover:bg-slate-50 group">
+                                <td className="p-3 border-r border-slate-100 bg-slate-50/30">
+                                    <div className="flex items-center gap-1 opacity-50 group-hover:opacity-100 transition-opacity">
+                                        {!isRunning && (log.status === 'error' || log.status === 'pending') ? (
+                                            <>
+                                                <button 
+                                                    onClick={() => setEditingRow({ index: log.id, data: { ...log.data } })}
+                                                    className="p-1.5 hover:bg-blue-100 text-slate-500 hover:text-blue-600 rounded transition-colors"
+                                                    title="Edit Data"
+                                                >
+                                                    <Edit2 size={14} />
+                                                </button>
+                                                <button 
+                                                    onClick={() => retryRow(log.id)}
+                                                    className="p-1.5 hover:bg-green-100 text-slate-500 hover:text-green-600 rounded transition-colors"
+                                                    title="Retry this row"
+                                                >
+                                                    <RotateCw size={14} />
+                                                </button>
+                                            </>
+                                        ) : (
+                                           <div className="w-14"></div>
+                                        )}
+                                    </div>
+                                </td>
                                 <td className="p-3 w-32">
                                     {log.status === 'pending' && <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600"><Clock size={12}/> Pending</span>}
                                     {log.status === 'success' && <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700"><CheckCircle2 size={12}/> {log.statusCode}</span>}
@@ -268,6 +365,68 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
         <button onClick={onBack} className="text-slate-500 hover:text-slate-800 text-sm">
             &larr; Back to Mapping
         </button>
+
+        {/* Edit Modal */}
+        {editingRow && (
+            <div className="fixed inset-0 z-[100] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+                <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
+                    <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                        <div className="flex items-center gap-2">
+                            <Edit2 size={18} className="text-blue-600" />
+                            <h3 className="font-bold text-slate-800">Edit Payload Data (Row #{editingRow.index + 1})</h3>
+                        </div>
+                        <button 
+                            onClick={() => setEditingRow(null)}
+                            className="p-2 hover:bg-slate-200 rounded-full text-slate-400 hover:text-slate-600"
+                        >
+                            <X size={20} />
+                        </button>
+                    </div>
+                    
+                    <div className="p-6 overflow-y-auto">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {mappings.map(mapping => (
+                                <div key={mapping.jsonPath}>
+                                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                                        {mapping.csvHeader} <span className="text-slate-300 font-normal normal-case">→ {mapping.jsonPath}</span>
+                                    </label>
+                                    <input 
+                                        type="text" 
+                                        value={editingRow.data[mapping.csvHeader] || ''}
+                                        onChange={(e) => setEditingRow({
+                                            ...editingRow,
+                                            data: { ...editingRow.data, [mapping.csvHeader]: e.target.value }
+                                        })}
+                                        className="w-full p-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow"
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+                         <button 
+                             onClick={() => setEditingRow(null)}
+                             className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg font-medium text-sm transition-colors"
+                         >
+                             Cancel
+                         </button>
+                         <button 
+                             onClick={() => handleEditSave(editingRow.data, false)}
+                             className="px-4 py-2 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg font-medium text-sm flex items-center gap-2 transition-colors shadow-sm"
+                         >
+                             <Save size={16} /> Save
+                         </button>
+                         <button 
+                             onClick={() => handleEditSave(editingRow.data, true)}
+                             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium text-sm flex items-center gap-2 transition-colors shadow-md shadow-blue-500/20"
+                         >
+                             <RotateCw size={16} /> Save & Retry
+                         </button>
+                    </div>
+                </div>
+            </div>
+        )}
     </div>
   );
 };
