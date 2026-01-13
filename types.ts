@@ -9,16 +9,29 @@ export interface CsvRow {
   [key: string]: string;
 }
 
+export type DataType = 'string' | 'number' | 'boolean' | 'object' | 'array_string' | 'array_number' | 'array_object';
+
 export interface TransformationConfig {
   enabled: boolean;
-  separator: string; // e.g. "|" or ","
-  itemKey?: string; // If set, wraps items in object: ["a"] -> [{ itemKey: "a" }]
+  separator: string; // The main list separator (e.g. "," or "|")
+  itemSeparator?: string; // Optional: The separator INSIDE an item (e.g. "*")
+  itemIndex?: number; // Optional: Which position to take (0, 1, 2...)
+}
+
+export interface InternalFieldMapping {
+    key: string;       // e.g. "Depart"
+    index: number;     // e.g. 0
+    dataType: DataType;// e.g. "string"
 }
 
 export interface Mapping {
-  jsonPath: string; // e.g., "productId" or "details.sku"
-  csvHeader: string; // e.g., "A" or "SKU_CODE"
+  id: string; // Unique ID for UI handling
+  jsonPath: string; // e.g., "productId" or "items[].id" (User editable)
+  dataType: DataType; // User selectable type
+  csvHeader?: string; // e.g., "A" or "SKU_CODE"
+  defaultValue?: string; // Value if no CSV header is mapped
   transformation?: TransformationConfig;
+  internalFields?: InternalFieldMapping[]; // Only used when dataType is array_object
 }
 
 export interface JobLog {

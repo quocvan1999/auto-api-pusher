@@ -4,12 +4,11 @@ import { ApiConfig } from '../types';
 import { Terminal, ArrowRight, Loader2, AlertCircle } from 'lucide-react';
 
 interface Props {
-  apiKey: string;
   initialCurl?: string;
   onConfigParsed: (config: ApiConfig, rawCurl: string) => void;
 }
 
-const CurlImporter: React.FC<Props> = ({ apiKey, initialCurl = '', onConfigParsed }) => {
+const CurlImporter: React.FC<Props> = ({ initialCurl = '', onConfigParsed }) => {
   const [curlText, setCurlText] = useState(initialCurl);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -19,7 +18,7 @@ const CurlImporter: React.FC<Props> = ({ apiKey, initialCurl = '', onConfigParse
     setLoading(true);
     setError(null);
     try {
-      const config = await parseCurlWithGemini(curlText, apiKey);
+      const config = await parseCurlWithGemini(curlText);
       onConfigParsed(config, curlText);
     } catch (e: any) {
       setError(e.message || "Failed to parse cURL.");

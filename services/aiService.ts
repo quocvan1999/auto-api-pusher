@@ -19,9 +19,10 @@ const cleanInternalKeys = (obj: any): any => {
   return obj;
 };
 
-export const parseCurlWithGemini = async (curlString: string, apiKey: string): Promise<ApiConfig> => {
+export const parseCurlWithGemini = async (curlString: string): Promise<ApiConfig> => {
+  const apiKey = process.env.API_KEY;
   if (!apiKey) {
-      throw new Error("API Key is missing. Please configure it in settings.");
+      throw new Error("API Key is missing in environment variables.");
   }
 
   try {
