@@ -3,6 +3,7 @@ import { AppStep, ApiConfig, CsvRow, Mapping } from './types';
 import CurlImporter from './components/CurlImporter';
 import DataMapper from './components/DataMapper';
 import JobRunner from './components/JobRunner';
+import ApiKeyModal from './components/ApiKeyModal';
 import { CloudLightning, Key } from 'lucide-react';
 
 function App() {
@@ -13,6 +14,16 @@ function App() {
   const [apiConfig, setApiConfig] = useState<ApiConfig | null>(null);
   const [bulkData, setBulkData] = useState<CsvRow[]>([]);
   const [mappings, setMappings] = useState<Mapping[]>([]);
+
+  // API Key State
+  const [apiKey, setApiKey] = useState<string>(() => {
+    return process.env.API_KEY || localStorage.getItem('gemini_api_key') || '';
+  });
+
+  const handleSaveKey = (key: string) => {
+    localStorage.setItem('gemini_api_key', key);
+    setApiKey(key);
+  };
 
   const handleConfigParsed = (config: ApiConfig, rawCurl: string) => {
     setApiConfig(config);
@@ -72,39 +83,53 @@ function App() {
                     enabled={canNavigateTo(AppStep.EXECUTE)}
                  />
              </div>
+             {apiKey && !process.env.API_KEY && (
+                 <button 
+                    onClick={() => setApiKey('')}
+                    className="flex items-center gap-1 text-slate-400 hover:text-red-500 transition-colors ml-4"
+                    title="Clear API Key"
+                 >
+                    <Key size={14} /> Clear Key
+                 </button>
+             )}
           </div>
         </div>
       </header>
 
       {/* Main Content */}
       <main className="flex-1 bg-slate-50 p-6 md:p-12 overflow-x-hidden relative">
-        <div className="transition-all duration-500">
-            {step === AppStep.CONFIGURE && (
-            <CurlImporter 
-                initialCurl={curlCommand}
-                onConfigParsed={handleConfigParsed} 
-            />
-            )}
-            
-            {step === AppStep.DATA_ENTRY && apiConfig && (
-            <DataMapper 
-                apiConfig={apiConfig} 
-                initialData={bulkData}
-                initialMappings={mappings}
-                onBack={() => setStep(AppStep.CONFIGURE)}
-                onNext={handleDataReady}
-            />
-            )}
+        {!apiKey ? (
+            <ApiKeyModal onSave={handleSaveKey} />
+        ) : (
+            <div className="transition-all duration-500">
+                {step === AppStep.CONFIGURE && (
+                <CurlImporter 
+                    initialCurl={curlCommand}
+                    onConfigParsed={handleConfigParsed} 
+                    apiKey={apiKey}
+                />
+                )}
+                
+                {step === AppStep.DATA_ENTRY && apiConfig && (
+                <DataMapper 
+                    apiConfig={apiConfig} 
+                    initialData={bulkData}
+                    initialMappings={mappings}
+                    onBack={() => setStep(AppStep.CONFIGURE)}
+                    onNext={handleDataReady}
+                />
+                )}
 
-            {step === AppStep.EXECUTE && apiConfig && (
-            <JobRunner 
-                apiConfig={apiConfig}
-                data={bulkData}
-                mappings={mappings}
-                onBack={() => setStep(AppStep.DATA_ENTRY)}
-            />
-            )}
-        </div>
+                {step === AppStep.EXECUTE && apiConfig && (
+                <JobRunner 
+                    apiConfig={apiConfig}
+                    data={bulkData}
+                    mappings={mappings}
+                    onBack={() => setStep(AppStep.DATA_ENTRY)}
+                />
+                )}
+            </div>
+        )}
       </main>
 
       <footer className="bg-white border-t border-slate-200 py-6 text-center text-slate-400 text-sm">

@@ -19,10 +19,12 @@ const cleanInternalKeys = (obj: any): any => {
   return obj;
 };
 
-export const parseCurlWithGemini = async (curlString: string): Promise<ApiConfig> => {
-  const apiKey = process.env.API_KEY;
+export const parseCurlWithGemini = async (curlString: string, providedApiKey?: string): Promise<ApiConfig> => {
+  // Prioritize provided key (from UI), then environment variable
+  const apiKey = providedApiKey || process.env.API_KEY;
+  
   if (!apiKey) {
-      throw new Error("API Key is missing in environment variables.");
+      throw new Error("API Key is missing. Please provide a valid Google Gemini API Key.");
   }
 
   try {
@@ -54,8 +56,6 @@ export const parseCurlWithGemini = async (curlString: string): Promise<ApiConfig
       `,
       config: {
         responseMimeType: "application/json",
-        // Note: responseSchema is omitted here because 'additionalProperties' (needed for dynamic headers/body)
-        // is not fully supported in the strict schema definition of the API yet.
       }
     });
 
@@ -71,7 +71,6 @@ export const parseCurlWithGemini = async (curlString: string): Promise<ApiConfig
     throw new Error("Empty response from AI");
   } catch (error: any) {
     console.error("Error parsing cURL:", error);
-    // Propagate the actual error message to help debugging (e.g. API Key issues, Quota, or Bad Request)
     throw new Error(error.message || "Failed to parse cURL command.");
   }
 };
