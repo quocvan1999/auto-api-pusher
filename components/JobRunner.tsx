@@ -138,10 +138,22 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
             return;
         }
 
-        const result = await sendRequest(currentLog.data as CsvRow, abortControllerRef.current.signal);
+        let result;
+        try {
+            result = await sendRequest(currentLog.data as CsvRow, abortControllerRef.current.signal);
+        } catch (err: any) {
+            // Check for AbortError (name can vary slightly in some polyfills/browsers, checking name is standard)
+            if (err.name === 'AbortError') {
+                setIsRunning(false);
+                return; // Exit the loop and function
+            }
+            // Fallback for other errors that might have escaped sendRequest's catch
+            result = { ok: false, status: 0, response: err.message || 'Unknown Error' };
+        }
 
-        if (result.ok === false && result.status === 0 && result.response.includes('aborted')) {
-             break;
+        if (abortControllerRef.current?.signal.aborted) {
+             setIsRunning(false);
+             return;
         }
         
         setLogs(prev => {
@@ -157,7 +169,14 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
         });
 
         const waitTime = Math.max(50, delay);
+        // We use a small loop or check for abort during wait if we wanted to be very precise, 
+        // but checking after await is usually sufficient for this app.
         await new Promise(r => setTimeout(r, waitTime)); 
+        
+        if (abortControllerRef.current?.signal.aborted) {
+            setIsRunning(false);
+            return;
+        }
     }
     
     setIsRunning(false);
@@ -165,7 +184,7 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
 
   const stopJob = () => {
     if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
+        abortControllerRef.current.abort("User stopped the job");
     }
     setIsRunning(false);
   };
