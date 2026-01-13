@@ -9,9 +9,16 @@ export interface CsvRow {
   [key: string]: string;
 }
 
+export interface TransformationConfig {
+  enabled: boolean;
+  separator: string; // e.g. "|" or ","
+  itemKey?: string; // If set, wraps items in object: ["a"] -> [{ itemKey: "a" }]
+}
+
 export interface Mapping {
   jsonPath: string; // e.g., "productId" or "details.sku"
   csvHeader: string; // e.g., "A" or "SKU_CODE"
+  transformation?: TransformationConfig;
 }
 
 export interface JobLog {

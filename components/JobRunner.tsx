@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ApiConfig, CsvRow, Mapping, JobLog } from '../types';
-import { setDeep } from '../utils/dataUtils';
+import { constructPayload } from '../utils/dataUtils';
 import { Play, Square, RefreshCcw, CheckCircle2, XCircle, Clock, AlertTriangle, Timer, ArrowDownCircle, Edit2, RotateCw, Save, X } from 'lucide-react';
 
 interface Props {
@@ -15,17 +15,15 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [stats, setStats] = useState({ success: 0, error: 0, pending: data.length });
-  const [delay, setDelay] = useState(5000); // Default 5s delay
-  const [autoScroll, setAutoScroll] = useState(true); // Control auto-scrolling
+  const [delay, setDelay] = useState(5000); 
+  const [autoScroll, setAutoScroll] = useState(true); 
   
-  // Edit State
   const [editingRow, setEditingRow] = useState<{ index: number, data: CsvRow } | null>(null);
   
   const abortControllerRef = useRef<AbortController | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const logsContainerRef = useRef<HTMLDivElement>(null);
 
-  // Initialize logs
   useEffect(() => {
     const initialLogs: JobLog[] = data.map((row, index) => ({
       id: index,
@@ -36,7 +34,6 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
     setLogs(initialLogs);
   }, [data]);
 
-  // Sync Stats with Logs
   useEffect(() => {
     const newStats = logs.reduce((acc, log) => {
         if (log.status === 'success') acc.success++;
@@ -46,31 +43,20 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
     }, { success: 0, error: 0, pending: 0 });
     setStats(newStats);
     
-    // Update progress
     const completed = newStats.success + newStats.error;
     const total = logs.length;
     setProgress(total > 0 ? (completed / total) * 100 : 0);
 
   }, [logs]);
 
-  // Auto-scroll logs
   useEffect(() => {
     if (isRunning && autoScroll) {
         logsEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }, [logs, isRunning, autoScroll]);
 
-  const constructBody = (row: CsvRow) => {
-    const body = {};
-    mappings.forEach(m => {
-      const value = row[m.csvHeader];
-      setDeep(body, m.jsonPath, value);
-    });
-    return body;
-  };
-
   const sendRequest = async (rowData: CsvRow, signal?: AbortSignal) => {
-    const body = constructBody(rowData);
+    const body = constructPayload(rowData, mappings);
     try {
         const response = await fetch(apiConfig.url, {
             method: apiConfig.method,
@@ -98,7 +84,6 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
   const retryRow = async (index: number) => {
      if (isRunning) return;
 
-     // Optimistic update
      setLogs(prev => {
          const n = [...prev];
          n[index] = { ...n[index], status: 'pending', response: 'Retrying...' };
@@ -128,13 +113,12 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
       const idx = editingRow.index;
       setLogs(prev => {
           const n = [...prev];
-          n[idx] = { ...n[idx], data: newData, status: 'error' }; // Reset to error visually so it can be retried, or keep status
+          n[idx] = { ...n[idx], data: newData, status: 'error' }; 
           return n;
       });
       setEditingRow(null);
 
       if (shouldRetry) {
-          // Add a small timeout to allow state to settle
           setTimeout(() => retryRow(idx), 100);
       }
   };
@@ -144,19 +128,7 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
     setIsRunning(true);
     abortControllerRef.current = new AbortController();
 
-    // We iterate through original indices
     for (let i = 0; i < logs.length; i++) {
-        // Access current log state from logs array which is a dependency
-        // Note: In a real-time loop, 'logs' from closure might be stale if we relied on it for status checks of *other* rows.
-        // But for the current row 'i', we check status.
-        // We must be careful: if the user edits row X while the loop is at row Y, the logs array in this closure is OLD.
-        // Ideally, we should block edits while running.
-        
-        // We need to fetch the LATEST status. 
-        // We can't easily get the latest state inside the loop without refs or functional updates.
-        // Simple fix: Stop the loop if user stops. Block edits while running.
-        
-        // Check "latest" status from a Ref or just trust the closure since edits are blocked.
         const currentLog = logs[i]; 
         
         if (currentLog.status === 'success') continue; 
@@ -348,8 +320,8 @@ const JobRunner: React.FC<Props> = ({ apiConfig, data, mappings, onBack }) => {
                                     {log.status === 'error' && <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700"><XCircle size={12}/> {log.statusCode || 'Err'}</span>}
                                 </td>
                                 <td className="p-3 font-mono text-slate-500">#{log.id + 1}</td>
-                                <td className="p-3 max-w-xs truncate font-mono text-xs text-slate-600" title={JSON.stringify(log.data)}>
-                                    {Object.values(log.data).join(', ')}
+                                <td className="p-3 max-w-xs truncate font-mono text-xs text-slate-600" title={JSON.stringify(constructPayload(log.data, mappings))}>
+                                    {JSON.stringify(constructPayload(log.data, mappings))}
                                 </td>
                                 <td className="p-3 max-w-xs truncate font-mono text-xs text-slate-500" title={log.response}>
                                     {log.response || '-'}

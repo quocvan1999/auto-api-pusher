@@ -1,4 +1,4 @@
-import { CsvRow } from "../types";
+import { CsvRow, Mapping } from "../types";
 
 export const parseCSV = (text: string): { headers: string[], data: CsvRow[] } => {
   if (!text.trim()) return { headers: [], data: [] };
@@ -22,18 +22,14 @@ export const parseCSV = (text: string): { headers: string[], data: CsvRow[] } =>
     if (!line) continue;
     
     // Split values by delimiter
-    // Note: This is a simple split. Complex CSVs with commas inside quotes might need a library like PapaParse,
-    // but this suffices for standard data exports.
     const values = line.split(delimiter).map(v => v.trim().replace(/^"|"$/g, ''));
     
-    // FIX: Check if the row is effectively empty (e.g., ",,,," or empty strings)
-    // This eliminates "ghost" rows often found at the end of Excel exports.
+    // Check if the row is effectively empty
     const hasData = values.some(v => v !== '');
     if (!hasData) continue;
 
     const row: CsvRow = {};
     headers.forEach((header, index) => {
-      // Safely map value to header
       row[header] = values[index] || '';
     });
     data.push(row);
@@ -65,4 +61,65 @@ export const setDeep = (obj: any, path: string, value: any) => {
     current = current[key];
   }
   current[keys[keys.length - 1]] = value;
+};
+
+// Get value from object by path: get(obj, "a.b")
+export const getDeep = (obj: any, path: string): any => {
+  if (!obj) return undefined;
+  return path.split('.').reduce((acc, part) => (acc && acc[part] !== undefined) ? acc[part] : undefined, obj);
+};
+
+// Core logic to convert a CSV Row + Mappings into the final JSON Body
+export const constructPayload = (row: CsvRow, mappings: Mapping[]): any => {
+    const body = {};
+    mappings.forEach(m => {
+      let value: any = row[m.csvHeader];
+
+      // --- TRANSFORMATION LOGIC (SPLIT & MAP) ---
+      if (m.transformation?.enabled && typeof value === 'string') {
+          const separator = m.transformation.separator || '|';
+          // Split and trim each item
+          const parts = value.split(separator).map(s => s.trim()).filter(s => s !== '');
+          
+          if (m.transformation.itemKey) {
+              // Support nested keys in array items (e.g. "registration.code")
+              value = parts.map(part => {
+                  const itemObj = {};
+                  setDeep(itemObj, m.transformation.itemKey!, part);
+                  return itemObj;
+              });
+          } else {
+              // Just array of strings: ["A", "B"]
+              value = parts;
+          }
+      } 
+      // --- SMART PARSING LOGIC (Legacy / Fallback) ---
+      else if (typeof value === 'string') {
+          let trimmed = value.trim();
+          trimmed = trimmed.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
+
+          if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || 
+              (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+              try {
+                  value = JSON.parse(trimmed);
+              } catch (e) { }
+          }
+          else if (trimmed.toLowerCase() === 'true') {
+              value = true;
+          }
+          else if (trimmed.toLowerCase() === 'false') {
+              value = false;
+          }
+          else if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+               // Prevent converting "0123" to number (keep as string), but convert "123" or "1.5"
+               if (!(trimmed.startsWith('0') && trimmed.length > 1 && !trimmed.startsWith('0.'))) {
+                    const num = Number(trimmed);
+                    if (!isNaN(num)) value = num;
+               }
+          }
+      }
+
+      setDeep(body, m.jsonPath, value);
+    });
+    return body;
 };
